@@ -1,0 +1,85 @@
+======================================================
+  HOW TO RUN THE DIGITAL BANKING BACKEND IN INTELLIJ
+======================================================
+
+Since this is a massive microservices project, running it in IntelliJ IDEA requires starting the databases and message brokers first, and then booting up the Spring Boot apps in the correct sequence.
+
+------------------------------------------------------
+STEP 1: START INFRASTRUCTURE (MySQL & Kafka via Docker)
+------------------------------------------------------
+You don't need to install MySQL or Kafka on your laptop. We will use the provided Docker Compose file just for the databases!
+1. Ensure Docker Desktop is open and running.
+2. Open your terminal (or IntelliJ Terminal) and navigate to the docker folder:
+   cd "C:\BANK PROJECT\docker"
+3. Run ONLY the infrastructure containers in the background:
+   docker-compose up -d mysql zookeeper kafka
+
+Wait about 30 seconds for MySQL and Kafka to fully initialize.
+
+------------------------------------------------------
+STEP 2: IMPORT PROJECT INTO INTELLIJ IDEA
+------------------------------------------------------
+1. Open IntelliJ IDEA.
+2. Click "File" -> "Open...".
+3. Select the root folder: "C:\BANK PROJECT" and click OK.
+4. IntelliJ will detect the "settings.gradle" file and automatically import all 6 modules (api-gateway, eureka-server, user-service, account-service, transaction-service, notification-service). Wait for Gradle to finish syncing.
+
+------------------------------------------------------
+STEP 3: RUN THE MICROSERVICES (CRITICAL ORDER)
+------------------------------------------------------
+To avoid connection errors, you MUST start the services in this exact order. 
+Use the "Run" button (Green Play Icon) in IntelliJ for each Application class:
+
+1. FIRST: Run `EurekaServerApplication` (in infrastructure/eureka-server). 
+   - Wait until you see "Started EurekaServerApplication" in the console.
+   - Verify by opening your browser to: http://localhost:8761
+
+2. SECOND: Run `ApiGatewayApplication` (in infrastructure/api-gateway).
+   - Wait until it successfully connects to Eureka.
+
+3. THIRD: Run the remaining business microservices. The order for these 4 does not matter!
+   - `UserServiceApplication`
+   - `AccountServiceApplication`
+   - `TransactionServiceApplication`
+   - `NotificationServiceApplication`
+
+Check Eureka (http://localhost:8761) to ensure all 5 services (Gateway + 4 logic services) show up under "Instances currently registered".
+
+------------------------------------------------------
+STEP 4: TEST THE API (Via Postman or Terminal)
+------------------------------------------------------
+Now that everything is running locally in your IDE, you can test the entire flow! Always send requests to the API Gateway on port 8080.
+
+1. REGISTER USER:
+   POST http://localhost:8080/api/auth/register
+   Headers: Content-Type: application/json
+   Body: {"name":"John", "email":"john@example.com", "password":"password123"}
+
+2. LOGIN USER (Copy the output token!):
+   POST http://localhost:8080/api/auth/login
+   Headers: Content-Type: application/json
+   Body: {"email":"john@example.com", "password":"password123"}
+
+3. CREATE TWO ACCOUNTS:
+   POST http://localhost:8080/api/accounts/user/1
+   Headers: Authorization: Bearer <YOUR_TOKEN>
+   (Run this twice so you have Account ID 1 and Account ID 2)
+
+4. DEPOSIT MONEY:
+   POST http://localhost:8080/api/accounts/1/deposit?amount=500
+   Headers: Authorization: Bearer <YOUR_TOKEN>
+
+5. TEST MICROSERVICES MAGIC (TRANSFER):
+   POST http://localhost:8080/api/transactions/transfer
+   Headers: Authorization: Bearer <YOUR_TOKEN>, Content-Type: application/json
+   Body: {"sourceAccountId": 1, "destinationAccountId": 2, "amount": 150}
+
+>>> Look at the IntelliJ console for "NotificationServiceApplication". You will see the Kafka message printed out confirming the transfer immediately!
+
+------------------------------------------------------
+HOW TO SHUT DOWN
+------------------------------------------------------
+1. Click the red "Stop" buttons in IntelliJ for all running Spring Boot apps.
+2. In your terminal, stop the Docker databases:
+   cd "C:\BANK PROJECT\docker"
+   docker-compose down
