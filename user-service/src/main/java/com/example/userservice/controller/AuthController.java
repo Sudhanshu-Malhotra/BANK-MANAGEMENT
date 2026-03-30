@@ -5,6 +5,7 @@ import com.example.userservice.dto.RegisterDto;
 import com.example.userservice.entity.User;
 import com.example.userservice.repository.UserRepository;
 import com.example.userservice.security.JwtTokenProvider;
+import com.example.userservice.service.KafkaProducerService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -30,6 +31,9 @@ public class AuthController {
     @Autowired
     private JwtTokenProvider tokenProvider;
 
+    @Autowired
+    private KafkaProducerService kafkaProducerService;
+
     @PostMapping("/register")
     public ResponseEntity<String> registerUser(@RequestBody RegisterDto registerDto) {
         // 1. Check if email exists
@@ -44,7 +48,10 @@ public class AuthController {
         user.setPassword(passwordEncoder.encode(registerDto.getPassword())); // Encrypt password here!
 
         // 3. Save to database
-        userRepository.save(user);
+        user = userRepository.save(user);
+
+        // 4. Send Kafka Event to notify other services
+        kafkaProducerService.sendUserRegistrationEvent(user.getId());
 
         return ResponseEntity.ok("User registered successfully");
     }
