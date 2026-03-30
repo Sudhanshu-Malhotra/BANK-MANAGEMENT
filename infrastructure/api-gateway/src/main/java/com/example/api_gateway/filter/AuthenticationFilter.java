@@ -1,14 +1,25 @@
 package com.example.api_gateway.filter;
 
 import com.example.api_gateway.util.JwtUtil;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.cloud.gateway.filter.GatewayFilter;
-import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @Component
-public class AuthenticationFilter extends AbstractGatewayFilterFactory<AuthenticationFilter.Config> {
+public class AuthenticationFilter extends OncePerRequestFilter {
 
     @Autowired
     private RouteValidator validator;
@@ -16,42 +27,70 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
     @Autowired
     private JwtUtil jwtUtil;
 
-    public AuthenticationFilter() {
-        super(Config.class);
-    }
-
     @Override
-    public GatewayFilter apply(Config config) {
-        return ((exchange, chain) -> {
-            if (validator.isSecured.test(exchange.getRequest())) {
-                // Check if header contains token
-                if (!exchange.getRequest().getHeaders().containsKey(HttpHeaders.AUTHORIZATION)) {
-                    throw new RuntimeException("Missing authorization header");
-                }
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
 
-                String authHeader = exchange.getRequest().getHeaders().get(HttpHeaders.AUTHORIZATION).get(0);
-                if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                    authHeader = authHeader.substring(7);
-                }
-
-                try {
-                    // Try to validate token
-                    jwtUtil.validateToken(authHeader);
-                    String username = jwtUtil.extractUsername(authHeader);
-
-                    // Mutate the request to append the LoggedInUser header for downstream services
-                    exchange = exchange.mutate()
-                        .request(r -> r.header("LoggedInUser", username))
-                        .build();
-
-                } catch (Exception e) {
-                    throw new RuntimeException("Unauthorized access to application");
-                }
+        if (validator.isSecured.test(request)) {
+            String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Missing or invalid authorization header");
+                return;
             }
-            return chain.filter(exchange);
-        });
+
+            String token = authHeader.substring(7);
+            try {
+                jwtUtil.validateToken(token);
+                String username = jwtUtil.extractUsername(token);
+
+                // Add the LoggedInUser header to the forwarded request
+                HeaderMapRequestWrapper requestWrapper = new HeaderMapRequestWrapper(request);
+                requestWrapper.addHeader("LoggedInUser", username);
+                filterChain.doFilter(requestWrapper, response);
+                return;
+
+            } catch (Exception e) {
+                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized access to application");
+                return;
+            }
+        }
+        filterChain.doFilter(request, response);
     }
 
-    public static class Config {
+    private static class HeaderMapRequestWrapper extends HttpServletRequestWrapper {
+        private Map<String, String> headerMap = new HashMap<>();
+
+        public HeaderMapRequestWrapper(HttpServletRequest request) {
+            super(request);
+        }
+
+        public void addHeader(String name, String value) {
+            headerMap.put(name, value);
+        }
+
+        @Override
+        public String getHeader(String name) {
+            String headerValue = super.getHeader(name);
+            if (headerMap.containsKey(name)) {
+                headerValue = headerMap.get(name);
+            }
+            return headerValue;
+        }
+
+        @Override
+        public Enumeration<String> getHeaderNames() {
+            List<String> names = Collections.list(super.getHeaderNames());
+            names.addAll(headerMap.keySet());
+            return Collections.enumeration(names);
+        }
+
+        @Override
+        public Enumeration<String> getHeaders(String name) {
+            List<String> values = Collections.list(super.getHeaders(name));
+            if (headerMap.containsKey(name)) {
+                values.add(headerMap.get(name));
+            }
+            return Collections.enumeration(values);
+        }
     }
 }

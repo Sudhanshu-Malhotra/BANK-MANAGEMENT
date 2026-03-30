@@ -1,7 +1,8 @@
 package com.example.api_gateway.filter;
 
-import org.springframework.http.server.reactive.ServerHttpRequest;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Component;
+
 import java.util.List;
 import java.util.function.Predicate;
 
@@ -14,8 +15,8 @@ public class RouteValidator {
             "/eureka"
     );
 
-    public Predicate<ServerHttpRequest> isSecured =
+    public Predicate<HttpServletRequest> isSecured =
             request -> openApiEndpoints
                     .stream()
-                    .noneMatch(uri -> request.getURI().getPath().contains(uri));
+                    .noneMatch(uri -> request.getRequestURI().contains(uri));
 }
