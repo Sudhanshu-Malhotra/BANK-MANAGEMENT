@@ -1,0 +1,6 @@
+rootProject.name = 'digital-banking-backend'
+
+include 'services:user-service'
+include 'services:account-service'
+include 'infrastructure:api-gateway'
+include 'infrastructure:eureka-server'
