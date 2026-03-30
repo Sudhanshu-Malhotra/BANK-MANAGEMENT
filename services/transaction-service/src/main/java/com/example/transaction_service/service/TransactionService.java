@@ -15,6 +15,9 @@ public class TransactionService {
 
     @Autowired
     private AccountClient accountClient;
+    
+    @Autowired
+    private KafkaProducerService kafkaProducerService;
 
     public Transaction transfer(Long sourceAccountId, Long destinationAccountId, BigDecimal amount) {
         // 1. Synchronously withdraw from source using Feign
@@ -29,6 +32,13 @@ public class TransactionService {
         tx.setDestinationAccountId(destinationAccountId);
         tx.setAmount(amount);
         tx.setType("TRANSFER");
-        return transactionRepository.save(tx);
+        Transaction savedTx = transactionRepository.save(tx);
+        
+        // 4. Asynchronously notify user via Kafka
+        String message = String.format("Successful transfer of $%s from Account %d to Account %d (TX ID: %d)", 
+                amount, sourceAccountId, destinationAccountId, savedTx.getId());
+        kafkaProducerService.sendTransactionEvent(message);
+        
+        return savedTx;
     }
 }
