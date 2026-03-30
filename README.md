@@ -1,72 +1,67 @@
-# Digital Banking Backend (Spring Boot Microservices)
+# Digital Banking Backend (Spring Boot Monorepo Architect)
 
-Welcome to the Digital Banking Backend project! This project demonstrates building a scalable microservices architecture from scratch using Java 21, Spring Boot, Spring Cloud, Kafka, Docker, and MySQL.
+Welcome to the Digital Banking Backend! This is a **production-ready**, highly-scalable internal banking ecosystem powered by Java 21, Spring Boot microservices, Spring Cloud Netflix Eureka, Spring Cloud Gateway, OpenFeign, and Kafka!
 
-## Phases Implemented
+## Architecture Diagram & Details
+Please read the comprehensive architectural breakdown at [docs/architecture.md](docs/architecture.md) to understand how the components interplay via synchronous HTTP Feign queries & asynchronous Kafka events!
 
-*   **Phase 1: Basic Microservices (User & Account)**
-    *   Created `user-service` and `account-service` with MySQL DBs.
-*   **Phase 2: JWT Authentication**
-    *   Secured `user-service` with BCrypt and `jjwt` tokens.
-*   **Phase 3: API Gateway**
-    *   Created `api-gateway` as a single point of entry. Routes all traffic automatically.
-*   **Phase 4: Service Discovery**
-    *   Created `eureka-server`. Services dynamically register with it.
-*   **Phase 5: Kafka Event-Driven Communication**
-    *   When a user registers across the Gateway, `user-service` publishes a `userRegistrationTopic` event to a local Kafka Broker.
-    *   `account-service` consumes this event and *automatically* creates a banking account for the new user!
-*   **Phase 6: Dockerization**
-    *   Added Dockerfiles for all microservices.
-    *   Added a massive `docker-compose.yml` to spin up Zookeeper, Kafka, MySQL, Eureka, API Gateway, User Service, and Account Service all in one go, networked together!
+## How to Boot Up the System (The Professional Way)
 
----
+You do NOT need to run these services individually across 5 different integrated terminals. We use **Docker Compose**.
 
-## How to Run the Project (The Easy Way)
-
-Make sure you have **Docker Desktop** installed and running.
-
-1. Open a terminal at the root of the project.
-2. Build the `.jar` files for all services first:
-```bash
-cd api-gateway && ./gradlew.bat build -x test && cd ..
-cd eureka-server && ./gradlew.bat build -x test && cd ..
-cd user-service && ./gradlew.bat build -x test && cd ..
-cd account-service && ./gradlew.bat build -x test && cd ..
-```
-
-3. Run the entire cluster using Docker Compose!
-```bash
-docker-compose up --build -d
-```
-> This will start **7 interconnected containers**. It might take a minute or two for MySQL to initialize and Eureka to register the services.
+1. Ensure **Docker Desktop** is running.
+2. Open a terminal directly at the root (`C:\BANK PROJECT`).
+3. Compile all the Microservices simultaneously using the centralized Gradle Wrapper:
+   ```bash
+   .\gradlew.bat clean build -x test
+   ```
+4. Step inside the `docker` directory and fire up the cluster:
+   ```bash
+   cd docker
+   docker-compose up --build -d
+   ```
+> Look alive—this boots exactly 9 heavy containers (Zookeeper, Kafka, MySQL, Eureka, API Gateway, and 4 Custom Spring Boot Services). Eureka takes about ~45 seconds to fully register all health-pins. 
 
 ---
 
-## API Testing (Postman / CURL Commands)
+## Testing API Flow (Via Gateway Port 8080)
 
-*Important: Since we use the API Gateway on port 8080, we ONLY send requests to `localhost:8080`.*
+Because we use a massive Edge Proxy (Gateway), all requests route cleanly into `localhost:8080`.
 
-### 1. Register a New User (This triggers Kafka!)
+### 1. Register User (User Service)
 ```bash
 curl -X POST http://localhost:8080/api/auth/register -H "Content-Type: application/json" -d "{\`"name\`":\`"Super\`", \`"email\`":\`"super@example.com\`", \`"password\`":\`"password123\`"}"
 ```
-> **Magic moment**: Wait 2 seconds. The `user-service` just sent an event to Kafka. The `account-service` consumed it and automatically created an account for this user!
 
-### 2. Login to get JWT Token
+### 2. Login & Validate JWT (Gateway filter)
 ```bash
 curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d "{\`"email\`":\`"super@example.com\`", \`"password\`":\`"password123\`"}"
 ```
-*(Copy the long text output. This is your JWT Token. We will refer to it as `<YOUR_TOKEN>` below).*
+Copy your JWT Token output. Substitute it as `<TOKEN>` below.
 
-### 3. View the Auto-Created Account Details
-Because Kafka did its job, the account already exists! Let's fetch it from the Account Service.
+### 3. Create Source & Destination Accounts
 ```bash
-curl -X GET http://localhost:8080/api/accounts/user/1
+# Create Account 1
+curl -X POST http://localhost:8080/api/accounts/user/1 -H "Authorization: Bearer <TOKEN>"
+
+# Create Account 2
+curl -X POST http://localhost:8080/api/accounts/user/1 -H "Authorization: Bearer <TOKEN>"
 ```
 
-### 4. Deposit Money
+### 4. Direct Operations
 ```bash
-curl -X POST "http://localhost:8080/api/accounts/1/deposit?amount=500"
+# Deposit $500 into Account 1
+curl -X POST "http://localhost:8080/api/accounts/1/deposit?amount=500" -H "Authorization: Bearer <TOKEN>"
 ```
 
-Congratulations! You have successfully built a complete Digital Banking Backend with Microservices, Security, Routing, Discovery, Messaging, and Docker!
+### 5. OpenFeign & Kafka Orchestration (Transaction Service)
+```bash
+# Transfer $150 from Account 1 to Account 2
+curl -X POST http://localhost:8080/api/transactions/transfer \
+-H "Authorization: Bearer <TOKEN>" \
+-H "Content-Type: application/json" \
+-d "{\`"sourceAccountId\`": 1, \`"destinationAccountId\`": 2, \`"amount\`": 150.00}"
+```
+> **Magic moment**: Wait 2 seconds and check your Docker console for `notification-service`. The Transaction Service synchronously ordered the Account Service to shift the balances via OpenFeign, and then blasted out a Kafka event that the Notification Service instantly consumed and logged!
+
+Congratulations on leveling up to Senior Cloud Architect!
