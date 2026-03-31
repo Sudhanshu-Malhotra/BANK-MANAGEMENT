@@ -1,57 +1,69 @@
 package com.example.userservice.security;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
-import java.security.Key;
+
+import javax.crypto.SecretKey;
 import java.util.Date;
 
 @Component
 public class JwtTokenProvider {
 
-    // Hardcoded secret for simplicity (In production, use environment variables)
-    private String jwtSecret = "afafasfafafasfasfasfafacasdasfasxASFACASDFACASDFASFASFDAFACA";
-    private int jwtExpirationInMs = 604800000; // 7 days
+    private static final Logger log = LoggerFactory.getLogger(JwtTokenProvider.class);
 
-    // Generates the token using the user's email
+    @Value("${app.jwt.secret}")
+    private String jwtSecret;
+
+    @Value("${app.jwt.expiration-ms:604800000}")
+    private long jwtExpirationMs;
+
     public String generateToken(Authentication authentication) {
         String username = authentication.getName();
         Date now = new Date();
-        Date expiryDate = new Date(now.getTime() + jwtExpirationInMs);
+        Date expiryDate = new Date(now.getTime() + jwtExpirationMs);
 
         return Jwts.builder()
                 .subject(username)
-                .issuedAt(new Date())
+                .issuedAt(now)
                 .expiration(expiryDate)
-                .signWith(key())
+                .signWith(getSigningKey())
                 .compact();
     }
 
-    private Key key() {
-        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
-    }
-
-    // Get email from the token
     public String getUsernameFromJWT(String token) {
         Claims claims = Jwts.parser()
-                .verifyWith((javax.crypto.SecretKey) key())
+                .verifyWith(getSigningKey())
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
         return claims.getSubject();
     }
 
-    // Validate the token
     public boolean validateToken(String authToken) {
         try {
-            Jwts.parser().verifyWith((javax.crypto.SecretKey) key()).build().parse(authToken);
+            Jwts.parser()
+                .verifyWith(getSigningKey())
+                .build()
+                .parseSignedClaims(authToken);
             return true;
-        } catch (Exception ex) {
-            System.out.println("Invalid JWT token");
+        } catch (JwtException ex) {
+            log.warn("Invalid JWT token: {}", ex.getMessage());
+        } catch (IllegalArgumentException ex) {
+            log.warn("JWT claims string is empty: {}", ex.getMessage());
         }
         return false;
+    }
+
+    private SecretKey getSigningKey() {
+        byte[] keyBytes = Decoders.BASE64.decode(jwtSecret);
+        return Keys.hmacShaKeyFor(keyBytes);
     }
 }

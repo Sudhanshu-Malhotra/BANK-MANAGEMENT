@@ -1,12 +1,19 @@
 package com.example.userservice.controller;
 
+import com.example.userservice.dto.AuthResponse;
 import com.example.userservice.dto.LoginDto;
 import com.example.userservice.dto.RegisterDto;
 import com.example.userservice.entity.User;
+import com.example.userservice.exception.DuplicateEmailException;
 import com.example.userservice.repository.UserRepository;
 import com.example.userservice.security.JwtTokenProvider;
 import com.example.userservice.service.KafkaProducerService;
+import com.example.userservice.service.UserService;
+import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -19,55 +26,47 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-    @Autowired
-    private AuthenticationManager authenticationManager;
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
-    @Autowired
-    private UserRepository userRepository;
-
-    @Autowired
-    private PasswordEncoder passwordEncoder;
-
-    @Autowired
-    private JwtTokenProvider tokenProvider;
-
-    @Autowired
-    private KafkaProducerService kafkaProducerService;
+    @Autowired private AuthenticationManager authenticationManager;
+    @Autowired private UserRepository userRepository;
+    @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private JwtTokenProvider tokenProvider;
+    @Autowired private KafkaProducerService kafkaProducerService;
+    @Autowired private com.example.userservice.mapper.UserMapper userMapper;
+    @Autowired private UserService userService;
 
     @PostMapping("/register")
-    public ResponseEntity<String> registerUser(@RequestBody RegisterDto registerDto) {
-        // 1. Check if email exists
+    public ResponseEntity<String> registerUser(@Valid @RequestBody RegisterDto registerDto) {
+        log.info("Registration attempt for email: {}", registerDto.getEmail());
+
         if (userRepository.findByEmail(registerDto.getEmail()).isPresent()) {
-            return ResponseEntity.badRequest().body("Email is already taken!");
+            throw new DuplicateEmailException(registerDto.getEmail());
         }
 
-        // 2. Create user and encrypt password
-        User user = new User();
-        user.setName(registerDto.getName());
-        user.setEmail(registerDto.getEmail());
-        user.setPassword(passwordEncoder.encode(registerDto.getPassword())); // Encrypt password here!
+        User user = userMapper.registerDtoToUser(registerDto);
+        user.setPassword(passwordEncoder.encode(registerDto.getPassword()));
+        User saved = userService.createUser(user);
 
-        // 3. Save to database
-        user = userRepository.save(user);
-
-        // 4. Send Kafka Event to notify other services
-        kafkaProducerService.sendUserRegistrationEvent(user.getId());
-
-        return ResponseEntity.ok("User registered successfully");
+        kafkaProducerService.sendUserRegistrationEvent(saved.getId());
+        log.info("User registered successfully with id: {}", saved.getId());
+        return ResponseEntity.status(HttpStatus.CREATED).body("User registered successfully");
     }
 
     @PostMapping("/login")
-    public ResponseEntity<String> authenticateUser(@RequestBody LoginDto loginDto) {
-        // 1. Authenticate with Spring Security
+    public ResponseEntity<AuthResponse> authenticateUser(@Valid @RequestBody LoginDto loginDto) {
+        log.info("Login attempt for email: {}", loginDto.getEmail());
+
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(loginDto.getEmail(), loginDto.getPassword()));
-
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
-        // 2. Generate JWT Token
         String token = tokenProvider.generateToken(authentication);
 
-        // 3. Return Token to the Client
-        return ResponseEntity.ok(token);
+        User user = userRepository.findByEmail(loginDto.getEmail())
+                .orElseThrow(() -> new RuntimeException("User not found after authentication"));
+
+        log.info("Login successful for userId: {}", user.getId());
+        return ResponseEntity.ok(new AuthResponse(token, user.getId(), user.getEmail()));
     }
 }

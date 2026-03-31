@@ -1,26 +1,47 @@
 package com.example.api_gateway.util;
 
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import java.security.Key;
+
+import javax.crypto.SecretKey;
 
 @Component
 public class JwtUtil {
 
-    public static final String SECRET = "afafasfafafasfasfasfafacasdasfasxASFACASDFACASDFASFASFDAFACA";
+    private static final Logger log = LoggerFactory.getLogger(JwtUtil.class);
+
+    @Value("${app.jwt.secret}")
+    private String jwtSecret;
 
     public void validateToken(final String token) {
-        Jwts.parser().verifyWith((javax.crypto.SecretKey) getSignKey()).build().parseSignedClaims(token);
+        try {
+            Jwts.parser()
+                .verifyWith(getSigningKey())
+                .build()
+                .parseSignedClaims(token);
+        } catch (JwtException | IllegalArgumentException ex) {
+            log.warn("JWT validation failed: {}", ex.getMessage());
+            throw ex;
+        }
     }
 
     public String extractUsername(String token) {
-        return Jwts.parser().verifyWith((javax.crypto.SecretKey) getSignKey()).build().parseSignedClaims(token).getPayload().getSubject();
+        return Jwts.parser()
+                .verifyWith(getSigningKey())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload()
+                .getSubject();
     }
 
-    private Key getSignKey() {
-        byte[] keyBytes = Decoders.BASE64.decode(SECRET);
+    private SecretKey getSigningKey() {
+        byte[] keyBytes = Decoders.BASE64.decode(jwtSecret);
         return Keys.hmacShaKeyFor(keyBytes);
     }
 }

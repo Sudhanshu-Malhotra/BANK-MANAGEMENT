@@ -1,85 +1,316 @@
-======================================================
-  HOW TO RUN THE DIGITAL BANKING BACKEND IN INTELLIJ
-======================================================
+======================================================================
+  HOW TO RUN THE BANKING BACKEND IN INTELLIJ IDEA (LOCAL DEV MODE)
+======================================================================
 
-Since this is a massive microservices project, running it in IntelliJ IDEA requires starting the databases and message brokers first, and then booting up the Spring Boot apps in the correct sequence.
+This guide covers running the entire Enterprise Banking Backend
+locally using IntelliJ IDEA with Docker for infrastructure only.
 
-------------------------------------------------------
-STEP 1: START INFRASTRUCTURE (MySQL & Kafka via Docker)
-------------------------------------------------------
-You don't need to install MySQL or Kafka on your laptop. We will use the provided Docker Compose file just for the databases!
-1. Ensure Docker Desktop is open and running.
-2. Open your terminal (or IntelliJ Terminal) and navigate to the docker folder:
+All requests go through the API Gateway on port 8080.
+
+----------------------------------------------------------------------
+STEP 1: START INFRASTRUCTURE CONTAINERS (MySQL, Kafka, Redis)
+----------------------------------------------------------------------
+
+You do NOT need to install MySQL, Kafka, or Redis on your machine.
+Docker provides all infrastructure services.
+
+1. Make sure Docker Desktop is running.
+
+2. Open a terminal and run:
    cd "C:\BANK PROJECT\docker"
-3. Run ONLY the infrastructure containers in the background:
-   docker-compose up -d mysql zookeeper kafka
+   docker-compose up -d zookeeper kafka mysql redis
 
-Wait about 30 seconds for MySQL and Kafka to fully initialize.
+Wait ~30 seconds for MySQL and Kafka to fully initialize.
 
-------------------------------------------------------
+   To verify Kafka is ready:
+   docker logs banking-kafka 2>&1 | findstr "started"
+
+   To verify MySQL is ready:
+   docker exec banking-mysql mysqladmin ping -u root -pMalhotra@13
+
+NOTE: You do NOT need to start prometheus, grafana, eureka-server,
+api-gateway, or any Spring Boot service containers — IntelliJ
+will run those directly.
+
+----------------------------------------------------------------------
 STEP 2: IMPORT PROJECT INTO INTELLIJ IDEA
-------------------------------------------------------
+----------------------------------------------------------------------
+
 1. Open IntelliJ IDEA.
-2. Click "File" -> "Open...".
+2. Click "File" -> "Open..."
 3. Select the root folder: "C:\BANK PROJECT" and click OK.
-4. IntelliJ will detect the "settings.gradle" file and automatically import all 6 modules (api-gateway, eureka-server, user-service, account-service, transaction-service, notification-service). Wait for Gradle to finish syncing.
+4. IntelliJ detects "settings.gradle" and imports 6 modules:
+     - infrastructure:api-gateway
+     - infrastructure:eureka-server
+     - services:user-service
+     - services:account-service
+     - services:transaction-service
+     - services:notification-service
+5. Wait for Gradle sync to finish (bottom status bar goes idle).
+   If prompted to trust the project, click "Trust Project".
+6. Ensure the Project SDK is set to Java 21:
+   File -> Project Structure -> Project -> SDK: temurin-21
 
-------------------------------------------------------
-STEP 3: RUN THE MICROSERVICES (CRITICAL ORDER)
-------------------------------------------------------
-To avoid connection errors, you MUST start the services in this exact order. 
-Use the "Run" button (Green Play Icon) in IntelliJ for each Application class:
+----------------------------------------------------------------------
+STEP 3: NO EXTRA CONFIGURATION NEEDED — DEV IS THE DEFAULT
+----------------------------------------------------------------------
 
-1. FIRST: Run `EurekaServerApplication` (in infrastructure/eureka-server). 
-   - Wait until you see "Started EurekaServerApplication" in the console.
-   - Verify by opening your browser to: http://localhost:8761
+Good news: you do NOT need to set any VM options or environment
+variables. Every service already defaults to the "dev" profile.
 
-2. SECOND: Run `ApiGatewayApplication` (in infrastructure/api-gateway).
-   - Wait until it successfully connects to Eureka.
+Each service's application.yml contains:
+  spring:
+    profiles:
+      active: ${SPRING_PROFILES_ACTIVE:dev}
 
-3. THIRD: Run the remaining business microservices. The order for these 4 does not matter!
-   - `UserServiceApplication`
-   - `AccountServiceApplication`
-   - `TransactionServiceApplication`
-   - `NotificationServiceApplication`
+This means:
+  - In IntelliJ (no env var set)  → uses "dev"  (localhost DBs, DEBUG logs)
+  - In Docker   (env var = prod)  → uses "prod" (Docker hostnames, tuned pool)
 
-Check Eureka (http://localhost:8761) to ensure all 5 services (Gateway + 4 logic services) show up under "Instances currently registered".
+Just click the green Run button on each Application class as-is.
 
-------------------------------------------------------
-STEP 4: TEST THE API (Via Postman or Terminal)
-------------------------------------------------------
-Now that everything is running locally in your IDE, you can test the entire flow! Always send requests to the API Gateway on port 8080.
+!! COMMON MISTAKE — DO NOT DO THIS !!
+   If you see this error:
+   "Could not find or load main class Dspring.profiles.active=dev"
 
-1. REGISTER USER:
-   POST http://localhost:8080/api/auth/register
-   Headers: Content-Type: application/json
-   Body: {"name":"John", "email":"john@example.com", "password":"password123"}
+   It means you accidentally pasted  -Dspring.profiles.active=dev
+   into the "Program Arguments" box instead of "VM Options".
+   Java read "Dspring.profiles.active=dev" as the class to run!
 
-2. LOGIN USER (Copy the output token!):
-   POST http://localhost:8080/api/auth/login
-   Headers: Content-Type: application/json
-   Body: {"email":"john@example.com", "password":"password123"}
+   FIX: Open Run Configuration → clear the Program Arguments field.
+   You do not need to add anything. Just run it as-is.
 
-3. CREATE TWO ACCOUNTS:
-   POST http://localhost:8080/api/accounts/user/1
-   Headers: Authorization: Bearer <YOUR_TOKEN>
-   (Run this twice so you have Account ID 1 and Account ID 2)
+----------------------------------------------------------------------
+STEP 4: START THE SERVICES IN ORDER
+----------------------------------------------------------------------
 
-4. DEPOSIT MONEY:
-   POST http://localhost:8080/api/accounts/1/deposit?amount=500
-   Headers: Authorization: Bearer <YOUR_TOKEN>
+You MUST start services in this exact order to avoid connection errors.
+Wait for each service to log "Started ... Application" before proceeding.
 
-5. TEST MICROSERVICES MAGIC (TRANSFER):
-   POST http://localhost:8080/api/transactions/transfer
-   Headers: Authorization: Bearer <YOUR_TOKEN>, Content-Type: application/json
-   Body: {"sourceAccountId": 1, "destinationAccountId": 2, "amount": 150}
+ORDER:
+  1. EurekaServerApplication (infrastructure/eureka-server)
+     -> Verify: http://localhost:8761
+        (should show the Eureka dashboard)
 
->>> Look at the IntelliJ console for "NotificationServiceApplication". You will see the Kafka message printed out confirming the transfer immediately!
+  2. ApiGatewayApplication (infrastructure/api-gateway)
+     -> Wait until console shows "Netty started on port 8080"
 
-------------------------------------------------------
-HOW TO SHUT DOWN
-------------------------------------------------------
-1. Click the red "Stop" buttons in IntelliJ for all running Spring Boot apps.
-2. In your terminal, stop the Docker databases:
+  3. UserServiceApplication (services/user-service)
+     -> Wait until console shows "Started UserServiceApplication"
+
+  4. AccountServiceApplication (services/account-service)
+     -> Wait until console shows "Started AccountServiceApplication"
+
+  5. TransactionServiceApplication (services/transaction-service)
+     -> Wait until console shows "Started TransactionServiceApplication"
+
+  6. NotificationServiceApplication (services/notification-service)
+     -> Wait until console shows "Started NotificationServiceApplication"
+
+Verify all services registered in Eureka:
+  http://localhost:8761
+  -> Should show: USER-SERVICE, ACCOUNT-SERVICE,
+                  TRANSACTION-SERVICE, NOTIFICATION-SERVICE, API-GATEWAY
+
+----------------------------------------------------------------------
+STEP 5: TEST THE API END-TO-END
+----------------------------------------------------------------------
+
+Use Postman, IntelliJ HTTP Client, or curl.
+All requests go to the Gateway: http://localhost:8080
+
+-----
+1. REGISTER A USER
+-----
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "password": "password123"
+}
+
+Expected: 201 Created → "User registered successfully"
+Side effect: account-service auto-creates a bank account for this user
+             (via Kafka userRegistrationTopic event)
+
+-----
+2. LOGIN AND SAVE YOUR TOKEN
+-----
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "john@example.com",
+  "password": "password123"
+}
+
+Expected: 200 OK
+Response:
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+  "tokenType": "Bearer",
+  "userId": 1,
+  "email": "john@example.com"
+}
+
+IMPORTANT: Copy the "accessToken" value. You need it for all
+subsequent requests as:  Authorization: Bearer <accessToken>
+
+-----
+3. CREATE ACCOUNTS
+-----
+POST http://localhost:8080/api/accounts/user/1
+Authorization: Bearer <TOKEN>
+
+Expected: 201 Created with account details (balance: 0.00)
+Run twice to create Account 1 and Account 2 (IDs will be 1 and 2).
+
+Note: Account 1 was already auto-created via Kafka during registration.
+      Run this once more to get Account 2.
+
+-----
+4. DEPOSIT MONEY
+-----
+POST http://localhost:8080/api/accounts/1/deposit?amount=500.00
+Authorization: Bearer <TOKEN>
+
+Expected: 200 OK with updated balance: 500.00
+
+-----
+5. TRANSFER MONEY (THE BIG TEST)
+-----
+POST http://localhost:8080/api/transactions/transfer
+Authorization: Bearer <TOKEN>
+Content-Type: application/json
+
+{
+  "sourceAccountId": 1,
+  "destinationAccountId": 2,
+  "amount": 150.00
+}
+
+Expected: 201 Created
+{
+  "id": 1,
+  "status": "COMPLETED",
+  "amount": 150.00,
+  ...
+}
+
+NOW: Look at the IntelliJ console for NotificationServiceApplication.
+     You will see a log line like:
+     INFO  NOTIFICATION RECEIVED | TRANSFER COMPLETED | TX#1 | Amount: $150.00 ...
+
+This confirms the full event chain worked:
+  Transaction Service → (Feign) → Account Service (debit/credit)
+                      → (Kafka) → Notification Service (alert)
+
+-----
+6. CHECK BALANCES
+-----
+GET http://localhost:8080/api/accounts/1
+Authorization: Bearer <TOKEN>
+-> balance should be 350.00
+
+GET http://localhost:8080/api/accounts/2
+Authorization: Bearer <TOKEN>
+-> balance should be 150.00
+
+----------------------------------------------------------------------
+STEP 6: HEALTH & MONITORING ENDPOINTS
+----------------------------------------------------------------------
+
+Each service exposes Spring Actuator. Access via direct ports in dev:
+
+  User Service health:        http://localhost:8081/actuator/health
+  Account Service health:     http://localhost:8082/actuator/health
+  Transaction Service health: http://localhost:8083/actuator/health
+  Notification health:        http://localhost:8084/actuator/health
+  API Gateway health:         http://localhost:8080/actuator/health
+
+  Circuit Breaker state:      http://localhost:8083/actuator/circuitbreakers
+  Prometheus metrics:         http://localhost:8081/actuator/prometheus
+
+----------------------------------------------------------------------
+STEP 7: SHUT DOWN GRACEFULLY
+----------------------------------------------------------------------
+
+1. In IntelliJ, click the red Stop button for each running service.
+   Recommended stop order (reverse of start):
+   Notification -> Transaction -> Account -> User -> Gateway -> Eureka
+
+2. Stop the Docker infrastructure containers:
    cd "C:\BANK PROJECT\docker"
    docker-compose down
+
+   To also delete all data (reset databases):
+   docker-compose down -v
+
+----------------------------------------------------------------------
+COMMON ISSUES & FIXES
+----------------------------------------------------------------------
+
+PROBLEM: Service fails to start with "Communications link failure"
+FIX: MySQL isn't ready yet. Wait 30 more seconds, then restart the service.
+     Check: docker exec banking-mysql mysqladmin ping -u root -pMalhotra@13
+
+PROBLEM: Kafka connection refused on startup
+FIX: Wait for Kafka to be fully up:
+     docker logs banking-kafka 2>&1 | findstr "started"
+     Then restart the affected service in IntelliJ.
+
+PROBLEM: 401 Unauthorized on all requests after login
+FIX: Make sure you're including "Bearer " (with space) before your token.
+     Format: Authorization: Bearer eyJhbGci...
+
+PROBLEM: Transfer returns 400 "Insufficient funds"
+FIX: Deposit money into the source account first (Step 4).
+
+PROBLEM: Eureka shows services as DOWN (not UP)
+FIX: The service is still starting. Wait 30 seconds and refresh.
+     Spring Boot needs time to register with Eureka after startup.
+
+PROBLEM: Gradle sync fails in IntelliJ
+FIX: Check File -> Settings -> Build Tools -> Gradle -> Gradle JVM
+     Must be set to Java 21 (temurin-21 or equivalent).
+
+----------------------------------------------------------------------
+PROJECT STRUCTURE REFERENCE
+----------------------------------------------------------------------
+
+C:\BANK PROJECT\
+  docker/
+    docker-compose.yml        <- Full stack (for Docker-only mode)
+    .env.example              <- Copy to .env for secrets
+    prometheus.yml            <- Prometheus scrape config
+  infrastructure/
+    eureka-server/            <- Start FIRST
+    api-gateway/              <- Start SECOND (port 8080)
+  services/
+    user-service/             <- port 8081
+    account-service/          <- port 8082
+    transaction-service/      <- port 8083
+    notification-service/     <- port 8084
+  settings.gradle
+  README.md                   <- Full API docs & architecture
+
+======================================================================
+  ALTERNATIVELY: FULL DOCKER MODE (No IntelliJ needed)
+======================================================================
+
+If you just want to demo the entire system without IntelliJ:
+
+  cd "C:\BANK PROJECT\docker"
+  cp .env.example .env
+  docker-compose up --build -d
+
+  Wait 4-5 minutes for all containers to build and start.
+  Check status: docker-compose ps
+  Logs: docker-compose logs -f user-service
+
+  All services and infrastructure start automatically in the correct
+  health-check-gated order.
+
+======================================================================
